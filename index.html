@@ -30,7 +30,7 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbyseLirL3QIF_lP-oIVK1rM4qjIArS1njxp8VGPE_GzFMXtLWCjGbdtu_ZNeTEXpuaG/exec";
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbw01CKa9GeKzyyEhszlqXqWo7C9_d_NviMsE0dG447b8MEx8n7o0JXUTttTmrhystkS/exec";
         
         const safeParseNum = (val) => parseFloat(String(val || '0').replace(/,/g, '')) || 0;
 
@@ -297,54 +297,36 @@
                     showToast("กรุณากรอกวันที่ และราคาที่จ่ายจริง", "error"); return;
                 }
 
-                // ===== ตรวจสอบข้อมูลซ้ำ =====
-                if (sheetData && sheetData.length > 0) {
-                    const isDuplicate = sheetData.some(item => {
-                        // เทียบแบบตรงไปตรงมา
-                        const sheetDate = String(item['วันที่ (Date)'] || '').substring(0, 10).trim();
-                        const formDate = String(formData.date || '').substring(0, 10).trim();
-                        
-                        const sheetTotal = safeParseNum(item['ราคาหลังลด (Total Paid)']);
-                        const formTotal = safeParseNum(formData.totalAfterDiscount);
-                        const isTotalMatch = Math.abs(sheetTotal - formTotal) < 0.1;
+                setIsLoading(true); // ล็อกปุ่มกันกดเบิ้ลทันที
+                setLoadingText("กำลังตรวจสอบและบันทึกข้อมูล...");
 
-                        const sheetVol = safeParseNum(item['จำนวนลิตร (Volume)']);
-                        const formVol = safeParseNum(formData.volume);
-                        const isVolMatch = Math.abs(sheetVol - formVol) < 0.1;
-
-                        return (sheetDate === formDate) && isTotalMatch && isVolMatch;
-                    });
-
-                    if (isDuplicate) {
-                        const confirmSave = window.confirm(`⚠️ พบข้อมูลซ้ำ!\n\nคุณเคยบันทึกยอดเงิน ฿${formData.totalAfterDiscount} (ปริมาณ ${formData.volume} ลิตร) ของวันที่ ${formData.date} ไปแล้ว\n\nคุณแน่ใจหรือไม่ว่าต้องการบันทึกรายการนี้ซ้ำอีกครั้ง?`);
-                        if (!confirmSave) return;
-                    }
-                }
-
-                setIsLoading(true);
-                setLoadingText("กำลังบันทึกข้อมูล และอัปโหลดรูป...");
-                const payload = { ...formData, image: imageBase64 };
+                // ส่งค่า forceSave: false ไปให้หลังบ้านเช็กก่อน
+                let payload = { ...formData, image: imageBase64, forceSave: false };
 
                 try {
-                    const response = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
-                    const result = await response.json();
-                    
+                    let response = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
+                    let result = await response.json();
+
+                    // 🛡️ ถ้าระบบหลังบ้านตอบกลับมาว่า "ซ้ำ"
+                    if (result.status === 'duplicate') {
+                        setIsLoading(false); // ปลดล็อกปุ่มให้กดตกลง/ยกเลิกได้
+                        
+                        const confirmSave = window.confirm(`⚠️ ฐานข้อมูลแจ้งเตือน: ตรวจพบข้อมูลซ้ำ!\n\nคุณเคยบันทึกยอดเงิน ฿${formData.totalAfterDiscount} (ปริมาณ ${formData.volume} ลิตร) ของวันที่ ${formData.date} ไปแล้ว\n\nคุณแน่ใจหรือไม่ว่าต้องการบันทึกรายการนี้ซ้ำอีกครั้ง?`);
+                        
+                        if (confirmSave) {
+                            // ถ้าผู้ใช้ยืนยันจะเซฟซ้ำ ให้ส่ง forceSave: true ไปบังคับเซฟ
+                            setIsLoading(true);
+                            setLoadingText("กำลังบังคับบันทึกข้อมูลซ้ำ...");
+                            payload.forceSave = true;
+                            response = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
+                            result = await response.json();
+                        } else {
+                            return; // ถ้ายกเลิก ให้หยุดทำงานทันที
+                        }
+                    }
+
                     if (result.status === 'success') {
                         showToast("บันทึกข้อมูลเรียบร้อยแล้ว!");
-                        
-                        // 🛠️ อัปเดตตารางความจำในเครื่องทันที ป้องกันปัญหา Cache และการกดบันทึกซ้ำ
-                        const newItem = {
-                            'วันที่ (Date)': formData.date,
-                            'ชนิดน้ำมัน (Fuel Type)': formData.fuelType,
-                            'ราคา/ลิตร (Price/L)': formData.pricePerLiter,
-                            'จำนวนลิตร (Volume)': formData.volume,
-                            'ราคาก่อนลด (Total Before)': formData.totalBeforeDiscount,
-                            'ส่วนลด (Discount)': formData.discount,
-                            'ราคาหลังลด (Total Paid)': formData.totalAfterDiscount,
-                            'ลิงก์รูปภาพ (Image URL)': result.imageUrl || ''
-                        };
-                        setSheetData(prevData => [...prevData, newItem]);
-
                         setImageBase64(null);
                         setFormData({ date: '', fuelType: '', pricePerLiter: '', volume: '', totalBeforeDiscount: '', discount: '0', totalAfterDiscount: '' });
                         
@@ -353,16 +335,17 @@
                             setActiveTab('dashboard');
                         }, 1000);
                     } else { throw new Error(result.message); }
+                    
                 } catch (error) {
                     showToast("บันทึกไม่สำเร็จ: " + error.message, "error");
-                } finally { setIsLoading(false); }
+                } finally { 
+                    setIsLoading(false); 
+                }
             };
 
             const fetchDashboardData = async () => {
                 try {
-                    // 🛠️ ทุบ Cache: เติมรหัสสุ่มต่อท้ายลิงก์ เพื่อบังคับให้โหลดใหม่ 100% ทุกครั้ง
                     const urlWithTimestamp = GAS_URL + "?t=" + new Date().getTime();
-                    
                     const response = await fetch(urlWithTimestamp, { cache: "no-store" });
                     const result = await response.json();
                     if (result.status === 'success' && result.data) {
@@ -439,8 +422,10 @@
                                 <input type="number" step="0.01" value={formData.totalAfterDiscount} onChange={e => setFormData({...formData, totalAfterDiscount: e.target.value})} className="w-full p-3 bg-emerald-50 border-2 border-emerald-200 text-emerald-700 font-bold rounded-lg focus:outline-none focus:border-emerald-500 text-lg" required />
                             </div>
                         </div>
-                        <button type="submit" className="w-full bg-emerald-600 text-white font-medium p-3.5 rounded-xl shadow-md hover:bg-emerald-700 transition mt-4 flex justify-center items-center gap-2">
-                            <i className="fas fa-save"></i> บันทึกข้อมูล
+                        
+                        {/* 🛡️ เพิ่ม disabled เพื่อป้องกันการกดปุ่มรัวๆ */}
+                        <button type="submit" disabled={isLoading} className={`w-full text-white font-medium p-3.5 rounded-xl shadow-md transition mt-4 flex justify-center items-center gap-2 ${isLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
+                            <i className="fas fa-save"></i> {isLoading ? 'กำลังบันทึก...' : 'บันทึกข้อมูล'}
                         </button>
                     </form>
                 </div>

@@ -274,6 +274,24 @@
                 if (!formData.date || !formData.totalAfterDiscount) {
                     showToast("กรุณากรอกวันที่ และราคาที่จ่ายจริง", "error"); return;
                 }
+
+                // ===== 🛡️ เริ่มระบบตรวจสอบข้อมูลซ้ำ =====
+                const isDuplicate = sheetData.some(item => {
+                    // เช็กว่า วันที่ตรงกัน และ ยอดเงินสุทธิตรงกัน หรือไม่
+                    return item['วันที่ (Date)'] === formData.date && 
+                           Number(item['ราคาหลังลด (Total Paid)']) === Number(formData.totalAfterDiscount);
+                });
+
+                if (isDuplicate) {
+                    // ถ้าพบว่าซ้ำ ให้เด้งหน้าต่างถามผู้ใช้
+                    const confirmSave = window.confirm(`⚠️ พบข้อมูลซ้ำ!\n\nดูเหมือนว่าคุณเคยบันทึกยอดเงิน ฿${formData.totalAfterDiscount} ของวันที่ ${formData.date} ไปแล้ว\n\nคุณแน่ใจหรือไม่ว่าต้องการบันทึกรายการนี้ซ้ำอีกครั้ง?`);
+                    
+                    if (!confirmSave) {
+                        return; // ถ้าผู้ใช้กดยกเลิก (Cancel) ให้หยุดการทำงานทันที
+                    }
+                }
+                // ===== สิ้นสุดระบบตรวจสอบข้อมูลซ้ำ =====
+
                 setIsLoading(true);
                 setLoadingText("กำลังบันทึกข้อมูล และอัปโหลดรูป...");
                 const payload = { ...formData, image: imageBase64 };

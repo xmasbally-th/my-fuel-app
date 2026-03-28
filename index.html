@@ -299,26 +299,30 @@
                     showToast("กรุณากรอกวันที่ และราคาที่จ่ายจริง", "error"); return;
                 }
 
-                // ===== ระบบตรวจสอบข้อมูลซ้ำ =====
+                // ===== 🛡️ ระบบตรวจสอบข้อมูลซ้ำ (แก้ปัญหาลูกน้ำพันหลัก) =====
                 if (sheetData && sheetData.length > 0) {
                     const isDuplicate = sheetData.some(item => {
+                        // 1. เทียบวันที่
                         const sheetDate = String(item['วันที่ (Date)'] || '').substring(0, 10).trim();
                         const formDate = String(formData.date || '').substring(0, 10).trim();
                         
-                        const sheetTotal = parseFloat(item['ราคาหลังลด (Total Paid)']) || 0;
-                        const formTotal = parseFloat(formData.totalAfterDiscount) || 0;
+                        // 2. ล้างเครื่องหมายคอมม่า (,) ออกก่อน แล้วค่อยแปลงเป็นตัวเลข
+                        const sheetTotal = parseFloat(String(item['ราคาหลังลด (Total Paid)'] || '0').replace(/,/g, '')) || 0;
+                        const formTotal = parseFloat(String(formData.totalAfterDiscount || '0').replace(/,/g, '')) || 0;
                         const isTotalMatch = Math.abs(sheetTotal - formTotal) < 0.1;
 
-                        const sheetVol = parseFloat(item['จำนวนลิตร (Volume)']) || 0;
-                        const formVol = parseFloat(formData.volume) || 0;
+                        // 3. ทำแบบเดียวกันกับจำนวนลิตร
+                        const sheetVol = parseFloat(String(item['จำนวนลิตร (Volume)'] || '0').replace(/,/g, '')) || 0;
+                        const formVol = parseFloat(String(formData.volume || '0').replace(/,/g, '')) || 0;
                         const isVolMatch = Math.abs(sheetVol - formVol) < 0.1;
 
+                        // ถ้าตรงกันทั้ง วันที่ + ยอดเงิน + จำนวนลิตร = ข้อมูลซ้ำ
                         return (sheetDate === formDate) && isTotalMatch && isVolMatch;
                     });
 
                     if (isDuplicate) {
-                        const confirmSave = window.confirm(`⚠️ พบข้อมูลที่อาจจะซ้ำกัน!\n\nคุณเคยบันทึกยอดเงิน ฿${formData.totalAfterDiscount} (ปริมาณ ${formData.volume} ลิตร) ของวันที่ ${formData.date} ไปแล้ว\n\nคุณแน่ใจหรือไม่ว่าต้องการบันทึกรายการนี้ซ้ำอีกครั้ง?`);
-                        if (!confirmSave) return;
+                        const confirmSave = window.confirm(`⚠️ พบข้อมูลซ้ำ!\n\nคุณเคยบันทึกยอดเงิน ฿${formData.totalAfterDiscount} (ปริมาณ ${formData.volume} ลิตร) ของวันที่ ${formData.date} ไปแล้ว\n\nคุณแน่ใจหรือไม่ว่าต้องการบันทึกรายการนี้ซ้ำอีกครั้ง?`);
+                        if (!confirmSave) return; // กดยกเลิก = หยุดบันทึก
                     }
                 }
                 // ===== สิ้นสุดระบบตรวจสอบข้อมูลซ้ำ =====

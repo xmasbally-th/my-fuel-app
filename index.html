@@ -272,22 +272,37 @@
             const handleSave = async (e) => {
                 e.preventDefault();
                 if (!formData.date || !formData.totalAfterDiscount) {
-                    showToast("กรุณากรอกวันที่ และราคาที่จ่ายจริง", "error"); return;
+                    showToast("กรุณากรอกวันที่ และราคาที่จ่ายจริง", "error"); 
+                    return;
                 }
 
-                // ===== 🛡️ เริ่มระบบตรวจสอบข้อมูลซ้ำ =====
-                const isDuplicate = sheetData.some(item => {
-                    // เช็กว่า วันที่ตรงกัน และ ยอดเงินสุทธิตรงกัน หรือไม่
-                    return item['วันที่ (Date)'] === formData.date && 
-                           Number(item['ราคาหลังลด (Total Paid)']) === Number(formData.totalAfterDiscount);
-                });
+                // ===== 🛡️ เริ่มระบบตรวจสอบข้อมูลซ้ำ (ฉบับอัปเกรด) =====
+                if (sheetData && sheetData.length > 0) {
+                    const isDuplicate = sheetData.some(item => {
+                        // 1. ดึงเฉพาะวันที่ YYYY-MM-DD มาเทียบกัน
+                        const sheetDate = String(item['วันที่ (Date)'] || '').substring(0, 10).trim();
+                        const formDate = String(formData.date || '').substring(0, 10).trim();
+                        
+                        // 2. แปลงยอดเงินเป็นตัวเลข และหาความต่าง (ยอมรับความคลาดเคลื่อนได้นิดหน่อยเผื่อทศนิยม)
+                        const sheetTotal = parseFloat(item['ราคาหลังลด (Total Paid)']) || 0;
+                        const formTotal = parseFloat(formData.totalAfterDiscount) || 0;
+                        const isTotalMatch = Math.abs(sheetTotal - formTotal) < 0.1;
 
-                if (isDuplicate) {
-                    // ถ้าพบว่าซ้ำ ให้เด้งหน้าต่างถามผู้ใช้
-                    const confirmSave = window.confirm(`⚠️ พบข้อมูลซ้ำ!\n\nดูเหมือนว่าคุณเคยบันทึกยอดเงิน ฿${formData.totalAfterDiscount} ของวันที่ ${formData.date} ไปแล้ว\n\nคุณแน่ใจหรือไม่ว่าต้องการบันทึกรายการนี้ซ้ำอีกครั้ง?`);
-                    
-                    if (!confirmSave) {
-                        return; // ถ้าผู้ใช้กดยกเลิก (Cancel) ให้หยุดการทำงานทันที
+                        // 3. แปลงจำนวนลิตรมาเทียบด้วย (เพิ่มความแม่นยำ)
+                        const sheetVol = parseFloat(item['จำนวนลิตร (Volume)']) || 0;
+                        const formVol = parseFloat(formData.volume) || 0;
+                        const isVolMatch = Math.abs(sheetVol - formVol) < 0.1;
+
+                        // ถือว่าซ้ำ ถ้า วันที่ตรงกัน + ยอดเงินตรงกัน + จำนวนลิตรตรงกัน
+                        return (sheetDate === formDate) && isTotalMatch && isVolMatch;
+                    });
+
+                    if (isDuplicate) {
+                        const confirmSave = window.confirm(`⚠️ พบข้อมูลที่อาจจะซ้ำกัน!\n\nคุณเคยบันทึกยอดเงิน ฿${formData.totalAfterDiscount} (ปริมาณ ${formData.volume} ลิตร) ของวันที่ ${formData.date} ไปแล้ว\n\nคุณแน่ใจหรือไม่ว่าต้องการบันทึกรายการนี้ซ้ำอีกครั้ง?`);
+                        
+                        if (!confirmSave) {
+                            return; // ถ้าผู้ใช้กด Cancel ให้หยุดการบันทึก
+                        }
                     }
                 }
                 // ===== สิ้นสุดระบบตรวจสอบข้อมูลซ้ำ =====
@@ -310,7 +325,6 @@
                     showToast("บันทึกไม่สำเร็จ: " + error.message, "error");
                 } finally { setIsLoading(false); }
             };
-
             const fetchDashboardData = async () => {
                 try {
                     const response = await fetch(GAS_URL);

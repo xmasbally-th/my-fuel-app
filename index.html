@@ -33,6 +33,9 @@
 
         const GAS_URL = "https://script.google.com/macros/s/AKfycbwzixYSqBCzEZvimWeNCjmiJEz7n8zrFD88BAAM2DYzEWRJWfAfkrgKDXw0Zt_mZ676/exec";
         
+        // Helper function สำหรับแปลงข้อความที่มีลูกน้ำเป็นตัวเลขอย่างปลอดภัย
+        const safeParseNum = (val) => parseFloat(String(val || '0').replace(/,/g, '')) || 0;
+
         const Toast = ({ message, type, onClose }) => {
             useEffect(() => {
                 const timer = setTimeout(onClose, 5000);
@@ -70,7 +73,7 @@
                     const dateStr = item['วันที่ (Date)'];
                     if (!dateStr) return;
                     const month = dateStr.substring(0, 7);
-                    monthlySpend[month] = (monthlySpend[month] || 0) + Number(item['ราคาหลังลด (Total Paid)'] || 0);
+                    monthlySpend[month] = (monthlySpend[month] || 0) + safeParseNum(item['ราคาหลังลด (Total Paid)']);
                 });
                 const labels = Object.keys(monthlySpend).sort();
                 const values = labels.map(l => monthlySpend[l]);
@@ -102,7 +105,7 @@
                     const d = item['วันที่ (Date)'].split('-');
                     return `${d[2]}/${d[1]}`;
                 });
-                const values = recentData.map(item => Number(item['ราคา/ลิตร (Price/L)'] || 0));
+                const values = recentData.map(item => safeParseNum(item['ราคา/ลิตร (Price/L)']));
                 const ctx = canvasRef.current.getContext('2d');
                 const chart = new Chart(ctx, {
                     type: 'line',
@@ -133,21 +136,19 @@
             const fileInputRef = useRef(null);
             
             const [sheetData, setSheetData] = useState([]);
-            // State สำหรับตัวกรอง Dashboard
             const [selectedFuel, setSelectedFuel] = useState('All');
             const [dashMetrics, setDashMetrics] = useState({ totalSpend: 0, totalVolume: 0, totalDiscount: 0, avgPrice: 0 });
 
             const showToast = (message, type = 'success') => setToast({ message, type });
 
-            // เมื่อข้อมูล sheetData หรือ selectedFuel เปลี่ยนแปลง ให้คำนวณตัวเลขใหม่
             useEffect(() => {
                 const filteredData = selectedFuel === 'All' ? sheetData : sheetData.filter(item => item['ชนิดน้ำมัน (Fuel Type)'] === selectedFuel);
                 
                 let tSpend = 0, tVol = 0, tDisc = 0;
                 filteredData.forEach(item => {
-                    tSpend += Number(item['ราคาหลังลด (Total Paid)'] || 0);
-                    tVol += Number(item['จำนวนลิตร (Volume)'] || 0);
-                    tDisc += Number(item['ส่วนลด (Discount)'] || 0);
+                    tSpend += safeParseNum(item['ราคาหลังลด (Total Paid)']);
+                    tVol += safeParseNum(item['จำนวนลิตร (Volume)']);
+                    tDisc += safeParseNum(item['ส่วนลด (Discount)']);
                 });
                 
                 setDashMetrics({ 
@@ -230,7 +231,6 @@
                     generationConfig: { responseMimeType: "application/json" }
                 };
 
-                // ใช้รุ่น 2.5 flash ตามที่แก้ล่าสุด
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${currentKey}`;
                 const delays = [1000, 2000, 3000];
                 let lastErrorMsg = "";
@@ -299,33 +299,27 @@
                     showToast("กรุณากรอกวันที่ และราคาที่จ่ายจริง", "error"); return;
                 }
 
-                // ===== 🛡️ ระบบตรวจสอบข้อมูลซ้ำ (แก้ปัญหาลูกน้ำพันหลัก) =====
                 if (sheetData && sheetData.length > 0) {
                     const isDuplicate = sheetData.some(item => {
-                        // 1. เทียบวันที่
                         const sheetDate = String(item['วันที่ (Date)'] || '').substring(0, 10).trim();
                         const formDate = String(formData.date || '').substring(0, 10).trim();
                         
-                        // 2. ล้างเครื่องหมายคอมม่า (,) ออกก่อน แล้วค่อยแปลงเป็นตัวเลข
-                        const sheetTotal = parseFloat(String(item['ราคาหลังลด (Total Paid)'] || '0').replace(/,/g, '')) || 0;
-                        const formTotal = parseFloat(String(formData.totalAfterDiscount || '0').replace(/,/g, '')) || 0;
+                        const sheetTotal = safeParseNum(item['ราคาหลังลด (Total Paid)']);
+                        const formTotal = safeParseNum(formData.totalAfterDiscount);
                         const isTotalMatch = Math.abs(sheetTotal - formTotal) < 0.1;
 
-                        // 3. ทำแบบเดียวกันกับจำนวนลิตร
-                        const sheetVol = parseFloat(String(item['จำนวนลิตร (Volume)'] || '0').replace(/,/g, '')) || 0;
-                        const formVol = parseFloat(String(formData.volume || '0').replace(/,/g, '')) || 0;
+                        const sheetVol = safeParseNum(item['จำนวนลิตร (Volume)']);
+                        const formVol = safeParseNum(formData.volume);
                         const isVolMatch = Math.abs(sheetVol - formVol) < 0.1;
 
-                        // ถ้าตรงกันทั้ง วันที่ + ยอดเงิน + จำนวนลิตร = ข้อมูลซ้ำ
                         return (sheetDate === formDate) && isTotalMatch && isVolMatch;
                     });
 
                     if (isDuplicate) {
                         const confirmSave = window.confirm(`⚠️ พบข้อมูลซ้ำ!\n\nคุณเคยบันทึกยอดเงิน ฿${formData.totalAfterDiscount} (ปริมาณ ${formData.volume} ลิตร) ของวันที่ ${formData.date} ไปแล้ว\n\nคุณแน่ใจหรือไม่ว่าต้องการบันทึกรายการนี้ซ้ำอีกครั้ง?`);
-                        if (!confirmSave) return; // กดยกเลิก = หยุดบันทึก
+                        if (!confirmSave) return;
                     }
                 }
-                // ===== สิ้นสุดระบบตรวจสอบข้อมูลซ้ำ =====
 
                 setIsLoading(true);
                 setLoadingText("กำลังบันทึกข้อมูล และอัปโหลดรูป...");
@@ -432,15 +426,11 @@
             );
 
             const renderDashboardView = () => {
-                // ดึงรายชื่อชนิดน้ำมันที่ไม่ซ้ำกันมาทำเป็นแท็บ
                 const uniqueFuels = ['All', ...new Set(sheetData.map(item => item['ชนิดน้ำมัน (Fuel Type)']).filter(Boolean))];
-                // กรองข้อมูลตามแท็บที่เลือก
                 const filteredData = selectedFuel === 'All' ? sheetData : sheetData.filter(item => item['ชนิดน้ำมัน (Fuel Type)'] === selectedFuel);
 
                 return (
                     <div className="animate-fade-in pb-24">
-                        
-                        {/* แท็บตัวกรอง (สามารถใช้นิ้วเลื่อนซ้ายขวาได้ถ้ายาวเกิน) */}
                         {uniqueFuels.length > 1 && (
                             <div className="flex gap-2 overflow-x-auto pb-4 mb-2 scrollbar-hide">
                                 {uniqueFuels.map(fuel => (
@@ -487,8 +477,10 @@
                             <div className="divide-y divide-gray-100">
                                 {filteredData.slice(-5).reverse().map((item, idx) => (
                                     <div key={idx} className="p-4 flex justify-between items-center hover:bg-gray-50">
-                                        <div><p className="font-medium text-gray-800 text-sm">{item['ชนิดน้ำมัน (Fuel Type)'] || 'ไม่ระบุ'}</p><p className="text-xs text-gray-500">{item['วันที่ (Date)']} • {Number(item['จำนวนลิตร (Volume)']||0).toFixed(2)} ลิตร</p></div>
-                                        <div className="text-right"><p className="font-bold text-gray-800 text-sm">฿{Number(item['ราคาหลังลด (Total Paid)']||0).toFixed(2)}</p>
+                                        <div><p className="font-medium text-gray-800 text-sm">{item['ชนิดน้ำมัน (Fuel Type)'] || 'ไม่ระบุ'}</p>
+                                             <p className="text-xs text-gray-500">{item['วันที่ (Date)']} • {safeParseNum(item['จำนวนลิตร (Volume)']).toFixed(2)} ลิตร</p>
+                                        </div>
+                                        <div className="text-right"><p className="font-bold text-gray-800 text-sm">฿{safeParseNum(item['ราคาหลังลด (Total Paid)']).toFixed(2)}</p>
                                             {item['ลิงก์รูปภาพ (Image URL)'] && (<a href={item['ลิงก์รูปภาพ (Image URL)']} target="_blank" className="text-[10px] text-blue-500 bg-blue-50 px-2 py-1 rounded inline-block mt-1"><i className="fas fa-image"></i> ดูบิล</a>)}
                                         </div>
                                     </div>

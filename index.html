@@ -32,7 +32,7 @@
         
         const Toast = ({ message, type, onClose }) => {
             useEffect(() => {
-                const timer = setTimeout(onClose, 4000);
+                const timer = setTimeout(onClose, 5000);
                 return () => clearTimeout(timer);
             }, [onClose]);
 
@@ -40,10 +40,10 @@
             const icon = type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle';
 
             return (
-                <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 w-[90%] max-w-sm">
+                <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 w-[95%] max-w-sm">
                     <div className={`${bgColor} text-white px-4 py-3 rounded-xl shadow-lg flex items-center gap-3`}>
                         <i className={`fas ${icon} text-xl flex-shrink-0`}></i>
-                        <span className="font-medium text-sm leading-tight">{message}</span>
+                        <span className="font-medium text-xs leading-tight break-words">{message}</span>
                     </div>
                 </div>
             );
@@ -120,7 +120,6 @@
             const [isLoading, setIsLoading] = useState(false);
             const [loadingText, setLoadingText] = useState("");
             
-            // ดึง API Key จาก LocalStorage ในเครื่อง
             const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
 
             const [imageBase64, setImageBase64] = useState(null);
@@ -174,39 +173,32 @@
             const extractDataWithAI = async (base64Str) => {
                 let currentKey = apiKey;
                 
-                // ตรวจสอบว่ามี Key ในเครื่องหรือยัง ถ้ายังให้พิมพ์ใส่
                 if (!currentKey) {
-                    setIsLoading(false); // ปิดโหลดก่อนให้กรอกข้อมูล
-                    const userInput = window.prompt("⚠️ กรุณาใส่ Gemini API Key ของคุณ (ระบบจะจำไว้ในเครื่อง ไม่ต้องใส่ซ้ำ):\n*ข้อมูลนี้จะถูกเก็บไว้อย่างปลอดภัยในเบราว์เซอร์ของคุณเท่านั้น");
+                    setIsLoading(false);
+                    const userInput = window.prompt("⚠️ กรุณาใส่ Gemini API Key ของคุณ (ระบบจะจำไว้ในเครื่อง):");
                     
                     if (!userInput || userInput.trim() === "") {
-                        showToast("คุณไม่ได้ใส่ API Key ระบบ AI จึงไม่สามารถทำงานได้", "error");
+                        showToast("คุณไม่ได้ใส่ API Key", "error");
                         return;
                     }
                     currentKey = userInput.trim();
                     setApiKey(currentKey);
-                    localStorage.setItem('gemini_api_key', currentKey); // บันทึกลงเครื่อง
-                    setIsLoading(true); // เปิดโหลดต่อ
+                    localStorage.setItem('gemini_api_key', currentKey);
+                    setIsLoading(true);
                 }
 
                 setLoadingText("AI กำลังอ่านใบเสร็จ... (อาจใช้เวลาสักครู่)");
                 
-                const prompt = `คุณคือผู้ช่วยดึงข้อมูลจากใบเสร็จค่าน้ำมันภาษาไทย (เช่น ปั๊ม PT, PTT, ฯลฯ)
-กรุณาดึงข้อมูลต่อไปนี้ และตอบกลับมาเป็นรูปแบบ JSON เท่านั้น โดยไม่มีข้อความอื่นเจือปน
-ตัวอย่าง JSON:
+                const prompt = `ดึงข้อมูลจากใบเสร็จค่าน้ำมันภาษาไทยนี้ ตอบกลับเป็นรูปแบบ JSON เท่านั้น ห้ามมีข้อความอื่นเจือปน
 {
   "date": "YYYY-MM-DD", 
-  "fuelType": "ชื่อชนิดน้ำมัน เช่น แก๊สโซฮอล์ 95, ดีเซล",
+  "fuelType": "ชนิดน้ำมัน เช่น แก๊สโซฮอล์ 95",
   "pricePerLiter": 31.65,
   "volume": 33.17,
   "totalBeforeDiscount": 1050.00,
   "discount": 17.00,
   "totalAfterDiscount": 1033.00
-}
-หมายเหตุ:
-- date: แปลงเป็น ค.ศ. (YYYY-MM-DD)
-- ถ้าระบุส่วนลดไม่ได้ ให้ใส่ 0
-- totalAfterDiscount คือราคาที่ต้องจ่ายสุทธิ (Total / Net)`;
+}`;
 
                 const payload = {
                     contents: [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: base64Str.split(',')[1] } }] }],
@@ -214,7 +206,7 @@
                 };
 
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${currentKey}`;
-                const delays = [1000, 2000, 4000];
+                const delays = [1000, 2000, 3000];
                 let lastErrorMsg = "";
 
                 for (let i = 0; i < 3; i++) {
@@ -223,17 +215,24 @@
                         
                         if (!response.ok) {
                             const errData = await response.json();
-                            const errMsg = (errData && errData.error && errData.error.message) ? errData.error.message : "API Error";
-                            throw new Error(errMsg);
+                            const errMsg = (errData && errData.error && errData.error.message) ? errData.error.message : "ไม่ทราบสาเหตุ";
+                            throw new Error("API Error: " + errMsg);
                         }
                         
                         const result = await response.json();
-                        let text = '{}';
+                        let text = '';
                         if (result.candidates && result.candidates.length > 0 && result.candidates[0].content && result.candidates[0].content.parts && result.candidates[0].content.parts.length > 0) {
                             text = result.candidates[0].content.parts[0].text;
                         }
                         
-                        text = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+                        // ระบบสกัดเฉพาะ JSON (ป้องกัน AI ตอบข้อความอื่นมาด้วย)
+                        const jsonMatch = text.match(/\{[\s\S]*\}/);
+                        if (jsonMatch) {
+                            text = jsonMatch[0];
+                        } else {
+                            throw new Error("AI ส่งข้อมูลมาผิดรูปแบบ (ไม่ใช่ JSON): " + text.substring(0, 30));
+                        }
+                        
                         const extractedData = JSON.parse(text);
                         
                         setFormData({
@@ -251,16 +250,16 @@
                         return;
                     } catch (error) {
                         lastErrorMsg = error.message;
+                        console.error("Attempt", i+1, "Error:", error);
                         if (i === 2) {
-                            let errorDisplay = "AI อ่านไม่ได้ กรุณากรอกเอง";
+                            // แสดงข้อความ Error ที่แท้จริงออกมาที่หน้าจอ
+                            let errorDisplay = `อ่านไม่ได้: ${lastErrorMsg}`;
                             if (lastErrorMsg.includes("API key not valid")) {
-                                errorDisplay = "API Key ไม่ถูกต้อง กรุณากดปุ่มรีเซ็ต Key มุมขวาบนแล้วใส่ใหม่";
-                                localStorage.removeItem('gemini_api_key'); // ลบ Key ที่ผิดทิ้ง
-                                setApiKey('');
-                            } else if (lastErrorMsg.includes("leaked") || lastErrorMsg.includes("PERMISSION_DENIED")) {
-                                errorDisplay = "API Key นี้ถูกบล็อกเพราะหลุดสู่สาธารณะ กรุณาสร้างใหม่";
+                                errorDisplay = "API Key ไม่ถูกต้อง กดปุ่ม 🔑 มุมขวาบนเพื่อใส่ใหม่";
                                 localStorage.removeItem('gemini_api_key');
                                 setApiKey('');
+                            } else if (lastErrorMsg.includes("Failed to fetch")) {
+                                errorDisplay = "การเชื่อมต่อล้มเหลว (อาจโดน Adblocker หรือเน็ตมีปัญหา)";
                             }
                             showToast(errorDisplay, "error");
                             setIsLoading(false);
@@ -439,7 +438,6 @@
                             <h1 className="text-xl font-bold text-emerald-600 flex items-center gap-2"><i className="fas fa-gas-pump"></i> MyFuel</h1>
                             <p className="text-xs text-gray-500">จัดการค่าใช้จ่ายน้ำมันอัจฉริยะ</p>
                         </div>
-                        {/* เพิ่มปุ่มรีเซ็ต API Key ตรงไอคอนโปรไฟล์ */}
                         <div onClick={resetApiKey} className="w-10 h-10 bg-emerald-100 rounded-full flex justify-center items-center text-emerald-600 shadow-inner cursor-pointer hover:bg-red-100 hover:text-red-500 transition" title="ลบ API Key">
                             <i className="fas fa-key"></i>
                         </div>

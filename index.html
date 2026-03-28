@@ -20,7 +20,6 @@
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-        /* ซ่อน scrollbar สำหรับแท็บตัวกรองแต่ยังเลื่อนได้ */
         .scrollbar-hide::-webkit-scrollbar { display: none; }
         .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
@@ -31,9 +30,8 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbznRnFxgdan9MQ0sjk1fSHKLNLb6anNngCKklkLGnrWmCY1tKk60IAv0uLJzJT-jFv2/exec";
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbwzixYSqBCzEZvimWeNCjmiJEz7n8zrFD88BAAM2DYzEWRJWfAfkrgKDXw0Zt_mZ676/exec";
         
-        // Helper function สำหรับแปลงข้อความที่มีลูกน้ำเป็นตัวเลขอย่างปลอดภัย
         const safeParseNum = (val) => parseFloat(String(val || '0').replace(/,/g, '')) || 0;
 
         const Toast = ({ message, type, onClose }) => {
@@ -299,8 +297,10 @@
                     showToast("กรุณากรอกวันที่ และราคาที่จ่ายจริง", "error"); return;
                 }
 
+                // ===== ตรวจสอบข้อมูลซ้ำ =====
                 if (sheetData && sheetData.length > 0) {
                     const isDuplicate = sheetData.some(item => {
+                        // เทียบแบบตรงไปตรงมา
                         const sheetDate = String(item['วันที่ (Date)'] || '').substring(0, 10).trim();
                         const formDate = String(formData.date || '').substring(0, 10).trim();
                         
@@ -328,12 +328,30 @@
                 try {
                     const response = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
                     const result = await response.json();
+                    
                     if (result.status === 'success') {
                         showToast("บันทึกข้อมูลเรียบร้อยแล้ว!");
+                        
+                        // 🛠️ อัปเดตตารางความจำในเครื่องทันที ป้องกันปัญหา Cache และการกดบันทึกซ้ำ
+                        const newItem = {
+                            'วันที่ (Date)': formData.date,
+                            'ชนิดน้ำมัน (Fuel Type)': formData.fuelType,
+                            'ราคา/ลิตร (Price/L)': formData.pricePerLiter,
+                            'จำนวนลิตร (Volume)': formData.volume,
+                            'ราคาก่อนลด (Total Before)': formData.totalBeforeDiscount,
+                            'ส่วนลด (Discount)': formData.discount,
+                            'ราคาหลังลด (Total Paid)': formData.totalAfterDiscount,
+                            'ลิงก์รูปภาพ (Image URL)': result.imageUrl || ''
+                        };
+                        setSheetData(prevData => [...prevData, newItem]);
+
                         setImageBase64(null);
                         setFormData({ date: '', fuelType: '', pricePerLiter: '', volume: '', totalBeforeDiscount: '', discount: '0', totalAfterDiscount: '' });
-                        fetchDashboardData(); 
-                        setTimeout(() => setActiveTab('dashboard'), 1000);
+                        
+                        setTimeout(() => {
+                            fetchDashboardData(); 
+                            setActiveTab('dashboard');
+                        }, 1000);
                     } else { throw new Error(result.message); }
                 } catch (error) {
                     showToast("บันทึกไม่สำเร็จ: " + error.message, "error");
@@ -342,7 +360,10 @@
 
             const fetchDashboardData = async () => {
                 try {
-                    const response = await fetch(GAS_URL);
+                    // 🛠️ ทุบ Cache: เติมรหัสสุ่มต่อท้ายลิงก์ เพื่อบังคับให้โหลดใหม่ 100% ทุกครั้ง
+                    const urlWithTimestamp = GAS_URL + "?t=" + new Date().getTime();
+                    
+                    const response = await fetch(urlWithTimestamp, { cache: "no-store" });
                     const result = await response.json();
                     if (result.status === 'success' && result.data) {
                         setSheetData(result.data);

@@ -20,6 +20,9 @@
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        /* ซ่อน scrollbar สำหรับแท็บตัวกรองแต่ยังเลื่อนได้ */
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body>
@@ -128,10 +131,32 @@
                 totalBeforeDiscount: '', discount: '0', totalAfterDiscount: ''
             });
             const fileInputRef = useRef(null);
+            
             const [sheetData, setSheetData] = useState([]);
+            // State สำหรับตัวกรอง Dashboard
+            const [selectedFuel, setSelectedFuel] = useState('All');
             const [dashMetrics, setDashMetrics] = useState({ totalSpend: 0, totalVolume: 0, totalDiscount: 0, avgPrice: 0 });
 
             const showToast = (message, type = 'success') => setToast({ message, type });
+
+            // เมื่อข้อมูล sheetData หรือ selectedFuel เปลี่ยนแปลง ให้คำนวณตัวเลขใหม่
+            useEffect(() => {
+                const filteredData = selectedFuel === 'All' ? sheetData : sheetData.filter(item => item['ชนิดน้ำมัน (Fuel Type)'] === selectedFuel);
+                
+                let tSpend = 0, tVol = 0, tDisc = 0;
+                filteredData.forEach(item => {
+                    tSpend += Number(item['ราคาหลังลด (Total Paid)'] || 0);
+                    tVol += Number(item['จำนวนลิตร (Volume)'] || 0);
+                    tDisc += Number(item['ส่วนลด (Discount)'] || 0);
+                });
+                
+                setDashMetrics({ 
+                    totalSpend: tSpend, 
+                    totalVolume: tVol, 
+                    totalDiscount: tDisc, 
+                    avgPrice: tVol > 0 ? (tSpend / tVol) : 0 
+                });
+            }, [sheetData, selectedFuel]);
 
             const resizeImage = (file) => {
                 return new Promise((resolve) => {
@@ -205,6 +230,7 @@
                     generationConfig: { responseMimeType: "application/json" }
                 };
 
+                // ใช้รุ่น 2.5 flash ตามที่แก้ล่าสุด
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${currentKey}`;
                 const delays = [1000, 2000, 3000];
                 let lastErrorMsg = "";
@@ -225,7 +251,6 @@
                             text = result.candidates[0].content.parts[0].text;
                         }
                         
-                        // ระบบสกัดเฉพาะ JSON (ป้องกัน AI ตอบข้อความอื่นมาด้วย)
                         const jsonMatch = text.match(/\{[\s\S]*\}/);
                         if (jsonMatch) {
                             text = jsonMatch[0];
@@ -252,7 +277,6 @@
                         lastErrorMsg = error.message;
                         console.error("Attempt", i+1, "Error:", error);
                         if (i === 2) {
-                            // แสดงข้อความ Error ที่แท้จริงออกมาที่หน้าจอ
                             let errorDisplay = `อ่านไม่ได้: ${lastErrorMsg}`;
                             if (lastErrorMsg.includes("API key not valid")) {
                                 errorDisplay = "API Key ไม่ถูกต้อง กดปุ่ม 🔑 มุมขวาบนเพื่อใส่ใหม่";
@@ -272,37 +296,29 @@
             const handleSave = async (e) => {
                 e.preventDefault();
                 if (!formData.date || !formData.totalAfterDiscount) {
-                    showToast("กรุณากรอกวันที่ และราคาที่จ่ายจริง", "error"); 
-                    return;
+                    showToast("กรุณากรอกวันที่ และราคาที่จ่ายจริง", "error"); return;
                 }
 
-                // ===== 🛡️ เริ่มระบบตรวจสอบข้อมูลซ้ำ (ฉบับอัปเกรด) =====
+                // ===== ระบบตรวจสอบข้อมูลซ้ำ =====
                 if (sheetData && sheetData.length > 0) {
                     const isDuplicate = sheetData.some(item => {
-                        // 1. ดึงเฉพาะวันที่ YYYY-MM-DD มาเทียบกัน
                         const sheetDate = String(item['วันที่ (Date)'] || '').substring(0, 10).trim();
                         const formDate = String(formData.date || '').substring(0, 10).trim();
                         
-                        // 2. แปลงยอดเงินเป็นตัวเลข และหาความต่าง (ยอมรับความคลาดเคลื่อนได้นิดหน่อยเผื่อทศนิยม)
                         const sheetTotal = parseFloat(item['ราคาหลังลด (Total Paid)']) || 0;
                         const formTotal = parseFloat(formData.totalAfterDiscount) || 0;
                         const isTotalMatch = Math.abs(sheetTotal - formTotal) < 0.1;
 
-                        // 3. แปลงจำนวนลิตรมาเทียบด้วย (เพิ่มความแม่นยำ)
                         const sheetVol = parseFloat(item['จำนวนลิตร (Volume)']) || 0;
                         const formVol = parseFloat(formData.volume) || 0;
                         const isVolMatch = Math.abs(sheetVol - formVol) < 0.1;
 
-                        // ถือว่าซ้ำ ถ้า วันที่ตรงกัน + ยอดเงินตรงกัน + จำนวนลิตรตรงกัน
                         return (sheetDate === formDate) && isTotalMatch && isVolMatch;
                     });
 
                     if (isDuplicate) {
                         const confirmSave = window.confirm(`⚠️ พบข้อมูลที่อาจจะซ้ำกัน!\n\nคุณเคยบันทึกยอดเงิน ฿${formData.totalAfterDiscount} (ปริมาณ ${formData.volume} ลิตร) ของวันที่ ${formData.date} ไปแล้ว\n\nคุณแน่ใจหรือไม่ว่าต้องการบันทึกรายการนี้ซ้ำอีกครั้ง?`);
-                        
-                        if (!confirmSave) {
-                            return; // ถ้าผู้ใช้กด Cancel ให้หยุดการบันทึก
-                        }
+                        if (!confirmSave) return;
                     }
                 }
                 // ===== สิ้นสุดระบบตรวจสอบข้อมูลซ้ำ =====
@@ -325,25 +341,15 @@
                     showToast("บันทึกไม่สำเร็จ: " + error.message, "error");
                 } finally { setIsLoading(false); }
             };
+
             const fetchDashboardData = async () => {
                 try {
                     const response = await fetch(GAS_URL);
                     const result = await response.json();
                     if (result.status === 'success' && result.data) {
-                        setSheetData(result.data); calculateMetrics(result.data);
+                        setSheetData(result.data);
                     }
                 } catch (error) { console.error("Fetch Data Error:", error); }
-            };
-
-            const calculateMetrics = (data) => {
-                if(!data || data.length === 0) return;
-                let tSpend = 0, tVol = 0, tDisc = 0;
-                data.forEach(item => {
-                    tSpend += Number(item['ราคาหลังลด (Total Paid)'] || 0);
-                    tVol += Number(item['จำนวนลิตร (Volume)'] || 0);
-                    tDisc += Number(item['ส่วนลด (Discount)'] || 0);
-                });
-                setDashMetrics({ totalSpend: tSpend, totalVolume: tVol, totalDiscount: tDisc, avgPrice: tVol > 0 ? (tSpend / tVol) : 0 });
             };
 
             useEffect(() => { fetchDashboardData(); }, []);
@@ -389,7 +395,7 @@
                                 <input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500" required />
                             </div>
                             <div className="col-span-2">
-                                <label className="block text-xs text-gray-500 mb-1">ชนิดน้ำมัน</label>
+                                <label className="block text-xs text-gray-500 mb-1">ชนิดน้ำมัน (แยกตามรถ)</label>
                                 <input type="text" value={formData.fuelType} onChange={e => setFormData({...formData, fuelType: e.target.value})} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500" placeholder="เช่น แก๊สโซฮอล์ 95" />
                             </div>
                             <div>
@@ -421,47 +427,74 @@
                 </div>
             );
 
-            const renderDashboardView = () => (
-                <div className="animate-fade-in pb-24">
-                    <div className="grid grid-cols-2 gap-3 mb-6">
-                        <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 p-4 rounded-2xl shadow text-white">
-                            <p className="text-emerald-100 text-xs mb-1">รวมค่าใช้จ่าย</p>
-                            <h3 className="text-xl font-bold">฿{dashMetrics.totalSpend.toLocaleString(undefined, {minimumFractionDigits:2})}</h3>
+            const renderDashboardView = () => {
+                // ดึงรายชื่อชนิดน้ำมันที่ไม่ซ้ำกันมาทำเป็นแท็บ
+                const uniqueFuels = ['All', ...new Set(sheetData.map(item => item['ชนิดน้ำมัน (Fuel Type)']).filter(Boolean))];
+                // กรองข้อมูลตามแท็บที่เลือก
+                const filteredData = selectedFuel === 'All' ? sheetData : sheetData.filter(item => item['ชนิดน้ำมัน (Fuel Type)'] === selectedFuel);
+
+                return (
+                    <div className="animate-fade-in pb-24">
+                        
+                        {/* แท็บตัวกรอง (สามารถใช้นิ้วเลื่อนซ้ายขวาได้ถ้ายาวเกิน) */}
+                        {uniqueFuels.length > 1 && (
+                            <div className="flex gap-2 overflow-x-auto pb-4 mb-2 scrollbar-hide">
+                                {uniqueFuels.map(fuel => (
+                                    <button 
+                                        key={fuel} 
+                                        onClick={() => setSelectedFuel(fuel)}
+                                        className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-medium transition-colors border ${
+                                            selectedFuel === fuel 
+                                                ? 'bg-emerald-600 text-white border-emerald-600 shadow' 
+                                                : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                                        }`}
+                                    >
+                                        {fuel === 'All' ? '🚗 รวมทุกคัน' : `⛽ ${fuel}`}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        <div className="grid grid-cols-2 gap-3 mb-6">
+                            <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 p-4 rounded-2xl shadow text-white">
+                                <p className="text-emerald-100 text-xs mb-1">รวมค่าใช้จ่าย</p>
+                                <h3 className="text-xl font-bold">฿{dashMetrics.totalSpend.toLocaleString(undefined, {minimumFractionDigits:2})}</h3>
+                            </div>
+                            <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                                <p className="text-gray-500 text-xs mb-1">รวมน้ำมันที่เติม</p>
+                                <h3 className="text-xl font-bold text-gray-800">{dashMetrics.totalVolume.toFixed(2)} <span className="text-sm">ลิตร</span></h3>
+                            </div>
+                            <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                                <p className="text-red-500 text-xs mb-1"><i className="fas fa-tag"></i> ประหยัดไป</p>
+                                <h3 className="text-xl font-bold text-gray-800">฿{dashMetrics.totalDiscount.toLocaleString(undefined, {minimumFractionDigits:2})}</h3>
+                            </div>
+                            <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                                <p className="text-blue-500 text-xs mb-1"><i className="fas fa-gas-pump"></i> เฉลี่ย/ลิตร</p>
+                                <h3 className="text-xl font-bold text-gray-800">฿{dashMetrics.avgPrice.toFixed(2)}</h3>
+                            </div>
                         </div>
-                        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                            <p className="text-gray-500 text-xs mb-1">รวมน้ำมันที่เติม</p>
-                            <h3 className="text-xl font-bold text-gray-800">{dashMetrics.totalVolume.toFixed(2)} <span className="text-sm">ลิตร</span></h3>
-                        </div>
-                        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                            <p className="text-red-500 text-xs mb-1"><i className="fas fa-tag"></i> ประหยัดไป</p>
-                            <h3 className="text-xl font-bold text-gray-800">฿{dashMetrics.totalDiscount.toLocaleString(undefined, {minimumFractionDigits:2})}</h3>
-                        </div>
-                        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                            <p className="text-blue-500 text-xs mb-1"><i className="fas fa-gas-pump"></i> เฉลี่ย/ลิตร</p>
-                            <h3 className="text-xl font-bold text-gray-800">฿{dashMetrics.avgPrice.toFixed(2)}</h3>
-                        </div>
-                    </div>
-                    <div className="bg-white p-4 rounded-2xl shadow-sm mb-6"><h3 className="text-sm font-semibold text-gray-700 mb-4">ยอดใช้จ่ายรายเดือน</h3><BarChart data={sheetData} /></div>
-                    <div className="bg-white p-4 rounded-2xl shadow-sm mb-6"><h3 className="text-sm font-semibold text-gray-700 mb-4">แนวโน้มราคาน้ำมันล่าสุด</h3><LineChart data={sheetData} /></div>
-                    <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-                        <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
-                            <h3 className="text-sm font-semibold text-gray-700">รายการล่าสุด</h3>
-                            <button onClick={fetchDashboardData} className="text-emerald-600 text-xs hover:underline"><i className="fas fa-sync-alt mr-1"></i>รีเฟรช</button>
-                        </div>
-                        <div className="divide-y divide-gray-100">
-                            {sheetData.slice(-5).reverse().map((item, idx) => (
-                                <div key={idx} className="p-4 flex justify-between items-center hover:bg-gray-50">
-                                    <div><p className="font-medium text-gray-800 text-sm">{item['ชนิดน้ำมัน (Fuel Type)'] || 'ไม่ระบุ'}</p><p className="text-xs text-gray-500">{item['วันที่ (Date)']} • {Number(item['จำนวนลิตร (Volume)']||0).toFixed(2)} ลิตร</p></div>
-                                    <div className="text-right"><p className="font-bold text-gray-800 text-sm">฿{Number(item['ราคาหลังลด (Total Paid)']||0).toFixed(2)}</p>
-                                        {item['ลิงก์รูปภาพ (Image URL)'] && (<a href={item['ลิงก์รูปภาพ (Image URL)']} target="_blank" className="text-[10px] text-blue-500 bg-blue-50 px-2 py-1 rounded inline-block mt-1"><i className="fas fa-image"></i> ดูบิล</a>)}
+                        <div className="bg-white p-4 rounded-2xl shadow-sm mb-6"><h3 className="text-sm font-semibold text-gray-700 mb-4">ยอดใช้จ่ายรายเดือน</h3><BarChart data={filteredData} /></div>
+                        <div className="bg-white p-4 rounded-2xl shadow-sm mb-6"><h3 className="text-sm font-semibold text-gray-700 mb-4">แนวโน้มราคาน้ำมันล่าสุด</h3><LineChart data={filteredData} /></div>
+                        <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                            <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
+                                <h3 className="text-sm font-semibold text-gray-700">รายการล่าสุด</h3>
+                                <button onClick={fetchDashboardData} className="text-emerald-600 text-xs hover:underline"><i className="fas fa-sync-alt mr-1"></i>รีเฟรช</button>
+                            </div>
+                            <div className="divide-y divide-gray-100">
+                                {filteredData.slice(-5).reverse().map((item, idx) => (
+                                    <div key={idx} className="p-4 flex justify-between items-center hover:bg-gray-50">
+                                        <div><p className="font-medium text-gray-800 text-sm">{item['ชนิดน้ำมัน (Fuel Type)'] || 'ไม่ระบุ'}</p><p className="text-xs text-gray-500">{item['วันที่ (Date)']} • {Number(item['จำนวนลิตร (Volume)']||0).toFixed(2)} ลิตร</p></div>
+                                        <div className="text-right"><p className="font-bold text-gray-800 text-sm">฿{Number(item['ราคาหลังลด (Total Paid)']||0).toFixed(2)}</p>
+                                            {item['ลิงก์รูปภาพ (Image URL)'] && (<a href={item['ลิงก์รูปภาพ (Image URL)']} target="_blank" className="text-[10px] text-blue-500 bg-blue-50 px-2 py-1 rounded inline-block mt-1"><i className="fas fa-image"></i> ดูบิล</a>)}
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
-                            {sheetData.length === 0 && <p className="text-center text-sm text-gray-500 p-6">ยังไม่มีข้อมูลการเติมน้ำมัน</p>}
+                                ))}
+                                {filteredData.length === 0 && <p className="text-center text-sm text-gray-500 p-6">ยังไม่มีข้อมูลการเติมน้ำมัน</p>}
+                            </div>
                         </div>
                     </div>
-                </div>
-            );
+                );
+            };
 
             return (
                 <div className="min-h-screen relative pb-20 max-w-md mx-auto shadow-2xl bg-gray-50 overflow-hidden">

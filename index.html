@@ -134,13 +134,26 @@
             const fileInputRef = useRef(null);
             
             const [sheetData, setSheetData] = useState([]);
+            
+            // State สำหรับตัวกรอง Dashboard
             const [selectedFuel, setSelectedFuel] = useState('All');
+            const [selectedYear, setSelectedYear] = useState('All');
             const [dashMetrics, setDashMetrics] = useState({ totalSpend: 0, totalVolume: 0, totalDiscount: 0, avgPrice: 0 });
+
+            // ดึงรายชื่อน้ำมันและปีที่ไม่ซ้ำกัน (สำหรับ Dropdown)
+            const uniqueFuels = ['All', ...new Set(sheetData.map(item => item['ชนิดน้ำมัน (Fuel Type)']).filter(Boolean))];
+            const uniqueYears = ['All', ...new Set(sheetData.map(item => String(item['วันที่ (Date)'] || '').substring(0, 4)).filter(y => y.length === 4))].sort().reverse();
 
             const showToast = (message, type = 'success') => setToast({ message, type });
 
+            // อัปเดตตัวเลขเมื่อกรองข้อมูล (รถ + ปี)
             useEffect(() => {
-                const filteredData = selectedFuel === 'All' ? sheetData : sheetData.filter(item => item['ชนิดน้ำมัน (Fuel Type)'] === selectedFuel);
+                const filteredData = sheetData.filter(item => {
+                    const matchFuel = selectedFuel === 'All' || item['ชนิดน้ำมัน (Fuel Type)'] === selectedFuel;
+                    const itemYear = String(item['วันที่ (Date)'] || '').substring(0, 4);
+                    const matchYear = selectedYear === 'All' || itemYear === selectedYear;
+                    return matchFuel && matchYear;
+                });
                 
                 let tSpend = 0, tVol = 0, tDisc = 0;
                 filteredData.forEach(item => {
@@ -155,7 +168,32 @@
                     totalDiscount: tDisc, 
                     avgPrice: tVol > 0 ? (tSpend / tVol) : 0 
                 });
-            }, [sheetData, selectedFuel]);
+            }, [sheetData, selectedFuel, selectedYear]);
+
+            // ===== 🛠️ ฟังก์ชันคำนวณอัตโนมัติ (Auto-Calc) =====
+            const handleFormChange = (field, value) => {
+                let newForm = { ...formData, [field]: value };
+                
+                // 1. ถ้ายูสเซอร์กรอก ลิตร หรือ ราคา/ลิตร -> คำนวณราคาก่อนลดให้
+                if (field === 'volume' || field === 'pricePerLiter') {
+                    const v = parseFloat(newForm.volume);
+                    const p = parseFloat(newForm.pricePerLiter);
+                    if (!isNaN(v) && !isNaN(p)) {
+                        newForm.totalBeforeDiscount = (v * p).toFixed(2);
+                    }
+                }
+                
+                // 2. ถ้ามีการแก้ไขตัวเลขใดๆ ที่เกี่ยวกับเงิน -> คำนวณราคาจ่ายจริงให้ (ก่อนลด - ส่วนลด)
+                if (field === 'volume' || field === 'pricePerLiter' || field === 'totalBeforeDiscount' || field === 'discount') {
+                    const tb = parseFloat(newForm.totalBeforeDiscount);
+                    const d = parseFloat(newForm.discount) || 0;
+                    if (!isNaN(tb)) {
+                        newForm.totalAfterDiscount = (tb - d).toFixed(2);
+                    }
+                }
+                
+                setFormData(newForm);
+            };
 
             const resizeImage = (file) => {
                 return new Promise((resolve) => {
@@ -297,36 +335,47 @@
                     showToast("กรุณากรอกวันที่ และราคาที่จ่ายจริง", "error"); return;
                 }
 
-                setIsLoading(true); // ล็อกปุ่มกันกดเบิ้ลทันที
+                setIsLoading(true);
                 setLoadingText("กำลังตรวจสอบและบันทึกข้อมูล...");
 
-                // ส่งค่า forceSave: false ไปให้หลังบ้านเช็กก่อน
                 let payload = { ...formData, image: imageBase64, forceSave: false };
 
                 try {
                     let response = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
                     let result = await response.json();
 
-                    // 🛡️ ถ้าระบบหลังบ้านตอบกลับมาว่า "ซ้ำ"
+                    // ระบบดักจับการซ้ำจากฐานข้อมูล
                     if (result.status === 'duplicate') {
-                        setIsLoading(false); // ปลดล็อกปุ่มให้กดตกลง/ยกเลิกได้
-                        
+                        setIsLoading(false);
                         const confirmSave = window.confirm(`⚠️ ฐานข้อมูลแจ้งเตือน: ตรวจพบข้อมูลซ้ำ!\n\nคุณเคยบันทึกยอดเงิน ฿${formData.totalAfterDiscount} (ปริมาณ ${formData.volume} ลิตร) ของวันที่ ${formData.date} ไปแล้ว\n\nคุณแน่ใจหรือไม่ว่าต้องการบันทึกรายการนี้ซ้ำอีกครั้ง?`);
                         
                         if (confirmSave) {
-                            // ถ้าผู้ใช้ยืนยันจะเซฟซ้ำ ให้ส่ง forceSave: true ไปบังคับเซฟ
                             setIsLoading(true);
                             setLoadingText("กำลังบังคับบันทึกข้อมูลซ้ำ...");
                             payload.forceSave = true;
                             response = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
                             result = await response.json();
                         } else {
-                            return; // ถ้ายกเลิก ให้หยุดทำงานทันที
+                            return; 
                         }
                     }
 
                     if (result.status === 'success') {
                         showToast("บันทึกข้อมูลเรียบร้อยแล้ว!");
+                        
+                        // อัปเดตตารางความจำในเครื่องทันที
+                        const newItem = {
+                            'วันที่ (Date)': formData.date,
+                            'ชนิดน้ำมัน (Fuel Type)': formData.fuelType,
+                            'ราคา/ลิตร (Price/L)': formData.pricePerLiter,
+                            'จำนวนลิตร (Volume)': formData.volume,
+                            'ราคาก่อนลด (Total Before)': formData.totalBeforeDiscount,
+                            'ส่วนลด (Discount)': formData.discount,
+                            'ราคาหลังลด (Total Paid)': formData.totalAfterDiscount,
+                            'ลิงก์รูปภาพ (Image URL)': result.imageUrl || ''
+                        };
+                        setSheetData(prevData => [...prevData, newItem]);
+
                         setImageBase64(null);
                         setFormData({ date: '', fuelType: '', pricePerLiter: '', volume: '', totalBeforeDiscount: '', discount: '0', totalAfterDiscount: '' });
                         
@@ -394,36 +443,52 @@
                         <div className="grid grid-cols-2 gap-4">
                             <div className="col-span-2">
                                 <label className="block text-xs text-gray-500 mb-1">วันที่เติมน้ำมัน</label>
-                                <input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500" required />
+                                <input type="date" value={formData.date} onChange={e => handleFormChange('date', e.target.value)} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500" required />
                             </div>
+                            
+                            {/* 🛠️ ช่องชนิดน้ำมันแบบ Dropdown อัจฉริยะ (Datalist) */}
                             <div className="col-span-2">
                                 <label className="block text-xs text-gray-500 mb-1">ชนิดน้ำมัน (แยกตามรถ)</label>
-                                <input type="text" value={formData.fuelType} onChange={e => setFormData({...formData, fuelType: e.target.value})} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500" placeholder="เช่น แก๊สโซฮอล์ 95" />
+                                <input 
+                                    list="fuel-options" 
+                                    value={formData.fuelType} 
+                                    onChange={e => handleFormChange('fuelType', e.target.value)} 
+                                    className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500" 
+                                    placeholder="กดเพื่อเลือก หรือพิมพ์ชื่อน้ำมันเอง" 
+                                />
+                                <datalist id="fuel-options">
+                                    {uniqueFuels.filter(f => f !== 'All').map(fuel => (
+                                        <option key={fuel} value={fuel} />
+                                    ))}
+                                    {/* ตัวเลือกมาตรฐานเผื่อยังไม่มีประวัติ */}
+                                    <option value="แก๊สโซฮอล์ 95" />
+                                    <option value="ดีเซล" />
+                                </datalist>
                             </div>
+
                             <div>
                                 <label className="block text-xs text-gray-500 mb-1">จำนวนลิตร (L)</label>
-                                <input type="number" step="0.01" value={formData.volume} onChange={e => setFormData({...formData, volume: e.target.value})} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500" />
+                                <input type="number" step="0.01" value={formData.volume} onChange={e => handleFormChange('volume', e.target.value)} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500" />
                             </div>
                             <div>
                                 <label className="block text-xs text-gray-500 mb-1">ราคา/ลิตร (฿)</label>
-                                <input type="number" step="0.01" value={formData.pricePerLiter} onChange={e => setFormData({...formData, pricePerLiter: e.target.value})} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500" />
+                                <input type="number" step="0.01" value={formData.pricePerLiter} onChange={e => handleFormChange('pricePerLiter', e.target.value)} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500" />
                             </div>
                             <div className="col-span-2 border-t pt-3 mt-1"></div>
                             <div>
                                 <label className="block text-xs text-gray-500 mb-1">ราคาก่อนลด</label>
-                                <input type="number" step="0.01" value={formData.totalBeforeDiscount} onChange={e => setFormData({...formData, totalBeforeDiscount: e.target.value})} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500" />
+                                <input type="number" step="0.01" value={formData.totalBeforeDiscount} onChange={e => handleFormChange('totalBeforeDiscount', e.target.value)} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500" />
                             </div>
                             <div>
                                 <label className="block text-xs text-red-500 mb-1">ส่วนลด</label>
-                                <input type="number" step="0.01" value={formData.discount} onChange={e => setFormData({...formData, discount: e.target.value})} className="w-full p-2.5 bg-red-50 border border-red-200 text-red-600 rounded-lg focus:outline-none focus:border-red-400" />
+                                <input type="number" step="0.01" value={formData.discount} onChange={e => handleFormChange('discount', e.target.value)} className="w-full p-2.5 bg-red-50 border border-red-200 text-red-600 rounded-lg focus:outline-none focus:border-red-400" />
                             </div>
                             <div className="col-span-2">
-                                <label className="block text-xs font-semibold text-emerald-600 mb-1">ราคาจ่ายจริง (฿)</label>
-                                <input type="number" step="0.01" value={formData.totalAfterDiscount} onChange={e => setFormData({...formData, totalAfterDiscount: e.target.value})} className="w-full p-3 bg-emerald-50 border-2 border-emerald-200 text-emerald-700 font-bold rounded-lg focus:outline-none focus:border-emerald-500 text-lg" required />
+                                <label className="block text-xs font-semibold text-emerald-600 mb-1">ราคาจ่ายจริง (฿) <span className="font-normal text-gray-400 ml-1">(คำนวณอัตโนมัติ)</span></label>
+                                <input type="number" step="0.01" value={formData.totalAfterDiscount} onChange={e => handleFormChange('totalAfterDiscount', e.target.value)} className="w-full p-3 bg-emerald-50 border-2 border-emerald-200 text-emerald-700 font-bold rounded-lg focus:outline-none focus:border-emerald-500 text-lg" required />
                             </div>
                         </div>
                         
-                        {/* 🛡️ เพิ่ม disabled เพื่อป้องกันการกดปุ่มรัวๆ */}
                         <button type="submit" disabled={isLoading} className={`w-full text-white font-medium p-3.5 rounded-xl shadow-md transition mt-4 flex justify-center items-center gap-2 ${isLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
                             <i className="fas fa-save"></i> {isLoading ? 'กำลังบันทึก...' : 'บันทึกข้อมูล'}
                         </button>
@@ -432,11 +497,30 @@
             );
 
             const renderDashboardView = () => {
-                const uniqueFuels = ['All', ...new Set(sheetData.map(item => item['ชนิดน้ำมัน (Fuel Type)']).filter(Boolean))];
-                const filteredData = selectedFuel === 'All' ? sheetData : sheetData.filter(item => item['ชนิดน้ำมัน (Fuel Type)'] === selectedFuel);
+                const filteredData = sheetData.filter(item => {
+                    const matchFuel = selectedFuel === 'All' || item['ชนิดน้ำมัน (Fuel Type)'] === selectedFuel;
+                    const itemYear = String(item['วันที่ (Date)'] || '').substring(0, 4);
+                    const matchYear = selectedYear === 'All' || itemYear === selectedYear;
+                    return matchFuel && matchYear;
+                });
 
                 return (
                     <div className="animate-fade-in pb-24">
+                        
+                        {/* 🛠️ แถบควบคุม: เลือกปี และ เลือกชนิดน้ำมัน */}
+                        <div className="flex justify-between items-center mb-4 border-b border-gray-200 pb-2">
+                            <h2 className="text-lg font-bold text-gray-800">ภาพรวมสถิติ</h2>
+                            <select 
+                                value={selectedYear} 
+                                onChange={e => setSelectedYear(e.target.value)}
+                                className="bg-white border border-gray-200 text-gray-700 text-sm rounded-lg focus:ring-emerald-500 focus:border-emerald-500 block p-1.5 shadow-sm outline-none"
+                            >
+                                {uniqueYears.map(year => (
+                                    <option key={year} value={year}>{year === 'All' ? 'ดูทุกปี' : `ปี ${year}`}</option>
+                                ))}
+                            </select>
+                        </div>
+
                         {uniqueFuels.length > 1 && (
                             <div className="flex gap-2 overflow-x-auto pb-4 mb-2 scrollbar-hide">
                                 {uniqueFuels.map(fuel => (
